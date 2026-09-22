@@ -1,0 +1,404 @@
+{
+  "name": "AI Customer Service Agent - Facebook Messenger (Fashion Store)",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Facebook Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "={{$json.method}}",
+        "path": "fb-messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "webhookId": "fb-messenger-webhook"
+    },
+    {
+      "id": "2",
+      "name": "Is Verification Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -980,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.query['hub.verify_token']}}",
+              "rightValue": "YOUR_FB_VERIFY_TOKEN",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "3",
+      "name": "Respond With Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        120
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{$json.query['hub.challenge']}}"
+      }
+    },
+    {
+      "id": "4",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -760,
+        340
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "sender_id",
+              "type": "string",
+              "value": "={{$json.body.entry[0].messaging[0].sender.id}}"
+            },
+            {
+              "id": "a2",
+              "name": "message_text",
+              "type": "string",
+              "value": "={{$json.body.entry[0].messaging[0].message.text}}"
+            },
+            {
+              "id": "a3",
+              "name": "timestamp",
+              "type": "string",
+              "value": "={{$json.body.entry[0].messaging[0].timestamp}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5",
+      "name": "Get Inventory (Google Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -540,
+        340
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_INVENTORY_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Inventory",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "1",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "6",
+      "name": "AI Sales Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        -320,
+        340
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{$('Extract Message Data').item.json.message_text}}",
+        "options": {
+          "systemMessage": "أنت مساعد مبيعات ودود لمتجر أزياء نسائية على فيسبوك ماسنجر. استخدم بيانات المخزون المرفقة (المنتجات، المقاسات، الأسعار، الكميات المتوفرة) للرد بدقة على استفسارات العميل. إن طلب العميل إتمام طلب، اجمع منه: المنتج، المقاس، اللون، الكمية، العنوان، رقم الهاتف. إن كانت رسالته تتضمن تفاوضاً على السعر أو شكوى، لا تجب بنفسك بل اطلب التحويل لصاحب المتجر."
+        }
+      }
+    },
+    {
+      "id": "7",
+      "name": "Needs Human Handoff?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -100,
+        340
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$('Extract Message Data').item.json.message_text}}",
+              "rightValue": "تخفيض|سعر أقل|شكوى|مشكلة|استرجاع",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      }
+    },
+    {
+      "id": "8",
+      "name": "Notify Store Owner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        120,
+        220
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v19.0/me/messages",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "YOUR_PAGE_ACCESS_TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"recipient\": {\"id\": \"OWNER_PSID\"}, \"message\": {\"text\": \"عميل يحتاج تدخلك: \" + $('Extract Message Data').item.json.message_text + \" (من: \" + $('Extract Message Data').item.json.sender_id + \")\"} } }}"
+      }
+    },
+    {
+      "id": "9",
+      "name": "Send AI Reply to Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        120,
+        460
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v19.0/me/messages",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "YOUR_PAGE_ACCESS_TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"recipient\": {\"id\": $('Extract Message Data').item.json.sender_id}, \"message\": {\"text\": $json.output} } }}"
+      }
+    },
+    {
+      "id": "10",
+      "name": "Log Order (Google Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        340,
+        460
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ORDERS_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Orders",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "customer_id": "={{$('Extract Message Data').item.json.sender_id}}",
+            "message": "={{$('Extract Message Data').item.json.message_text}}",
+            "ai_response": "={{$json.output}}",
+            "status": "جديد",
+            "created_at": "={{$now}}"
+          }
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "1",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "11",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        560,
+        340
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "EVENT_RECEIVED"
+      }
+    }
+  ],
+  "connections": {
+    "Facebook Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is Verification Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Verification Request?": {
+      "main": [
+        [
+          {
+            "node": "Respond With Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message Data": {
+      "main": [
+        [
+          {
+            "node": "Get Inventory (Google Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Inventory (Google Sheets)": {
+      "main": [
+        [
+          {
+            "node": "AI Sales Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Sales Agent": {
+      "main": [
+        [
+          {
+            "node": "Needs Human Handoff?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Human Handoff?": {
+      "main": [
+        [
+          {
+            "node": "Notify Store Owner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send AI Reply to Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send AI Reply to Customer": {
+      "main": [
+        [
+          {
+            "node": "Log Order (Google Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Order (Google Sheets)": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Store Owner": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
